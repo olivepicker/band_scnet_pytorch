@@ -26,8 +26,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://pypi.org/project/neural-grok/"
-Repository = "https://github.com/olivepicker/band-scnet"
+Homepage = "https://github.com/olivepicker/band_scnet_pytorch"
+Repository = "https://github.com/olivepicker/band_scnet_pytorch"
 
 [project.optional-dependencies]
 examples = []

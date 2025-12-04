@@ -29,7 +29,13 @@ class SDLayer(nn.Module):
         super().__init__()
         self.conv = nn.Conv2d(in_channels = in_channels, out_channels = out_channels, kernel_size=kernel_size, stride = stride)
     def forward(self, x):
-        
+        return self.conv(x)
+
+class SULayer(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, stride):
+        super().__init__()
+        self.conv = nn.ConvTranspose2d(in_channels = in_channels, out_channels = out_channels, kernel_size=kernel_size, stride = stride)
+    def forward(self, x):
         return self.conv(x)
 
 class SDBlock(nn.Module):
@@ -115,13 +121,13 @@ class FullBandLinearModule(nn.Module):
 class CrossBandBlock(nn.Module):
     def __init__(self, dim_hidden, dim_squeeze, num_freqs):
         super().__init__()
-        self.fconv0 = FConv(dim_hidden)
+        self.fconv0 = FConv(dim_hidden, kernel_size=3)
         self.fblm = FullBandLinearModule(dim_hidden, dim_squeeze, num_freqs)
-        self.fconv1 = FConv(dim_hidden)
+        self.fconv1 = FConv(dim_hidden, kernel_size=3)
 
     def forward(self, x):
         B, C, H, F = x.size()
-        f0 = self.fconv0(x)
+        f0 = self.fconv0(x) + x
         f0 = rearrange(f0, 'b c (h f) -> (b h) f c', b=B, h=H)
 
         fblm = self.fblm(f0) + f0
@@ -131,7 +137,7 @@ class CrossBandBlock(nn.Module):
         f1 = rearrange(f1, 'b c (h f) -> b c h f', h=H) + fblm
 
         return f1
-        
+
 class MHSA(nn.Module):
     def __init__(self, dim_hidden, num_heads=4, drop_rate=0.):
         super().__init__()
@@ -147,7 +153,7 @@ class MHSA(nn.Module):
         return x, attn
 
 class TConvFFN(nn.Module):
-    def __init__(self, dim_hidden, dim_ffn, kernel_size=3, groups=8, drop_rate=0.):
+    def __init__(self, dim_hidden, dim_ffn, kernel_size=5, groups=8, drop_rate=0.):
         super().__init__()
         self.norm0 = nn.LayerNorm(dim_hidden)
         self.blk0 = nn.Sequential(
@@ -158,7 +164,7 @@ class TConvFFN(nn.Module):
             nn.Conv1d(in_channels=dim_ffn, out_channels=dim_ffn, groups=groups, kernel_size=kernel_size, padding='same'),
             nn.SiLU(),
             nn.Conv1d(in_channels=dim_ffn, out_channels=dim_ffn, groups=groups, kernel_size=kernel_size, padding='same'),
-            nn.GroupNorm(num_groups=8, num_channels=dim_ffn),
+            nn.GroupNorm(num_groups=groups, num_channels=dim_ffn),
             nn.SiLU(),
             nn.Conv1d(in_channels=dim_ffn, out_channels=dim_ffn, groups=groups, kernel_size=kernel_size, padding='same'),
             nn.SiLU(),
@@ -189,7 +195,109 @@ class NarrowBandBlock(nn.Module):
     def forward(self, x):
         B = x.size(0)
         x = rearrange(x, 'b c h f -> (b h) f c')
-        x, attn = self.mhsa(x)
-        x = self.ffn(x)
-        x = rearrange(x, '(b h) f c -> b c h f', b=B)
+        
+        x_mhsa, attn = self.mhsa(x)
+        x_mhsa = x + x_mhsa
+        
+        x_ffn = self.ffn(x_mhsa)
+        x_ffn = x_mhsa + x_ffn
+        x = rearrange(x_ffn, '(b h) f c -> b c h f', b=B)
+
         return x        
+    
+class CSAFusion(nn.Module):
+    def __init__(
+        self, 
+        dim,
+        num_heads=4,
+        gate_kernel_size=2,
+        gate_stride_size=2,
+    ):
+        super().__init__()
+        self.cmhsa = CMHSA(dim, num_heads=num_heads)
+        self.gate = nn.Sequential(
+            nn.Conv2d(),
+            nn.LayerNorm(),
+            nn.Linear(),
+            nn.Sigmoid(),
+            nn.Conv2d()
+        )
+        self.glu = GLU()
+        
+    def forward(self, x):
+        x_cmhsa = self.cmhsa(x)
+        x_gate = self.gate(x)
+        x = torch.cat([x_cmhsa, x_gate], dim=-1)
+        x = self.glu(x)
+
+        return x
+    
+class CMHSA(nn.Module):
+    def __init__(
+        self, 
+        dim, 
+        in_channels, 
+        num_heads = 4,        
+    ):
+        super().__init__()
+        self.to_q = nn.Linear(
+            nn.Conv2d(dim, dim),
+            nn.PReLU(),
+            nn.LayerNorm(dim)
+        )
+        self.to_k = nn.Linear(
+            nn.Conv2d(dim, dim),
+            nn.PReLU(),
+            nn.LayerNorm(dim)
+        )
+        self.to_v = nn.Linear(
+            nn.Conv2d(dim, dim),
+            nn.PReLU(),
+            nn.LayerNorm(dim)
+        )
+
+        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=num_heads, batch_first=True)
+        self.head = nn.Sequential(
+            nn.Conv2d(),
+            nn.PReLU(),
+            nn.LayerNorm()
+        )
+        
+    def forward(self, x):
+        q, k, v = self.to_q(x), self.to_k(k), self.to_v(x)
+        attn, _ = self.attn(q, k, v)
+        x = self.head(attn)
+        
+        return x
+
+class GLU(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d()
+        self.act = nn.Sigmoid()
+        self.pwconv = nn.Conv2d(kernel_size=1)
+
+    def forward(self, x):
+        x_conv = self.conv(x)
+        x_act = self.act(x_conv)
+        x = torch.cat([x_conv, x_act], dim=-1)
+        
+        return self.pwconv(x)
+    
+class BandSCNet(nn.Module):
+    def __init__(
+        self,
+        num_blocks,
+        num_separation_groups,
+    ):
+        super().__init__()
+        self.encoder = nn.ModuleList([])
+        for i in range(num_blocks):
+            self.encoder.append()
+        self.fusion = nn.ModuleList([])
+        self.decoder = nn.ModuleList([])
+        self.separation = nn.ModuleList([])
+        
+
+    def forward(self):
+        pass
