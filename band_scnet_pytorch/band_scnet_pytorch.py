@@ -4,81 +4,9 @@ import numpy as np
 
 from einops import rearrange
 from einops.layers.torch import Rearrange
+from typing import Union, Tuple, Sequence
 
-# Encoder / Decoder
-class ConvModule(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, num_modules=0):
-        super().__init__()
-        self.layers = nn.ModuleList([])
-        
-        for _ in range(num_modules):
-            self.layers.append(nn.Sequential(
-                nn.Conv2d(in_channels = in_channels, out_channels = out_channels, kernel_size=kernel_size),
-                nn.BatchNorm2d(out_channels),
-                nn.ReLU()
-            ))
-        
-    def forward(self, x):
-        for layers in self.layers:
-            x = layers(x)
-        
-        return x
-
-class SDLayer(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride):
-        super().__init__()
-        self.conv = nn.Conv2d(in_channels = in_channels, out_channels = out_channels, kernel_size=kernel_size, stride = stride)
-    def forward(self, x):
-        return self.conv(x)
-
-class SULayer(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, stride):
-        super().__init__()
-        self.conv = nn.ConvTranspose2d(in_channels = in_channels, out_channels = out_channels, kernel_size=kernel_size, stride = stride)
-    def forward(self, x):
-        return self.conv(x)
-
-class SDBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, strides=[]):
-        super().__init__()
-        self.low_freq_block = nn.Sequential(
-            SDLayer(in_channels = in_channels, out_channels = in_channels, kernel_size=kernel_size, stride=(1, strides[0])),
-            nn.GELU(),
-            ConvModule(in_channels = in_channels, out_channels = in_channels, kernel_size=kernel_size, num_modules=3)
-        )
-        self.mid_freq_block = nn.Sequential(
-            SDLayer(in_channels = in_channels, out_channels = in_channels, kernel_size=kernel_size, stride=(1, strides[1])),
-            nn.GELU(),
-            ConvModule(in_channels = in_channels, out_channels = in_channels, kernel_size=kernel_size, num_modules=2)
-        )
-        self.high_freq_block = nn.Sequential(
-            SDLayer(in_channels = in_channels, out_channels = in_channels, kernel_size=kernel_size, stride=(1, strides[2])),
-            nn.GELU(),
-            ConvModule(in_channels = in_channels, out_channels = in_channels, kernel_size=kernel_size, num_modules=1)
-        )
-
-        self.last_conv = nn.Conv2d(in_channels = in_channels, out_channels = out_channels, kernel_size=kernel_size)
-
-    def forward(self, x):
-        B, C, H, W = x.size()
-
-        ls = int(W * 0.175)
-        ms = int(W * (0.175 + 0.392))
-
-        x_low = x[..., :ls]     # (B, C, H, 0:ls)
-        x_mid = x[..., ls:ms]  # (B, C, H, ls:ms)
-        x_high = x[..., ms:]   # (B, C, H, ms:)
-
-        l = self.low_freq_block(x_low)
-        m = self.mid_freq_block(x_mid)
-        h = self.high_freq_block(x_high)
-    
-        s = torch.concat([l, m, h], dim=3)
-        e = self.last_conv(s)
-
-        return s, e
-
-# Separation Network
+## Separation Network
 class FConv(nn.Module):
     def __init__(self, in_channels, kernel_size=5, groups=8):
         super().__init__()
@@ -205,6 +133,7 @@ class NarrowBandBlock(nn.Module):
 
         return x        
     
+## CSAFusion Network
 class CSAFusion(nn.Module):
     def __init__(
         self, 
@@ -283,7 +212,8 @@ class GLU(nn.Module):
         x = torch.cat([x_conv, x_act], dim=-1)
         
         return self.pwconv(x)
-    
+
+## Main class
 class BandSCNet(nn.Module):
     def __init__(
         self,

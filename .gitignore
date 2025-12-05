@@ -1,2 +1,5 @@
 # ext
 *.ipynb
+
+# path
+__pycache__
