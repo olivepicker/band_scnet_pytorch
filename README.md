@@ -2,6 +2,13 @@
 
 Unofficial implementation proposed [Band-SCNet](https://www.isca-archive.org/interspeech_2025/yang25d_interspeech.pdf) from Yang et al. of Interspeech.
 
+## Todo
+- [x] Encoder / Decoder baseline
+- [x] Separation Network
+- [ ] Fusion Network
+- [ ] Train / Valid
+- [ ] AMC Internal test
+
 ## Citations
 
 ```bibtex

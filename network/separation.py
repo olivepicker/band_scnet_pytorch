@@ -150,7 +150,13 @@ class NarrowBandBlock(nn.Module):
         return x
     
 class SeparationNet(nn.Module):
-    def __init__(self, dim_hidden, dim_squeeze, dim_ffn, num_freqs):
+    def __init__(
+        self, 
+        dim_hidden, 
+        dim_squeeze, 
+        dim_ffn, 
+        num_freqs
+    ):
         super().__init__()
         self.crossband = CrossBandBlock(
             dim_hidden=dim_hidden,

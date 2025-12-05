@@ -44,7 +44,7 @@ class ConvModule(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
 
-class SULayer(nn.Module):
+class SDLayer(nn.Module):
     def __init__(
         self,
         in_channels: int,
@@ -57,7 +57,7 @@ class SULayer(nn.Module):
         kh, kw = kernel_size
         padding = (kh // 2, kw // 2)
 
-        self.conv = nn.ConvTranspose2d(
+        self.conv = nn.Conv2d(
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=kernel_size,
@@ -69,19 +69,20 @@ class SULayer(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.conv(x)
 
-class SUBlock(nn.Module):
+class SDBlock(nn.Module):
     def __init__(
         self,
         in_channels: int,
         out_channels: int,
         kernel_size: Union[int, Tuple[int, int]],
-        strides: Sequence[int] = (16, 4, 1),
+        strides: Sequence[int] = (1, 4, 16),
         split_ratios: Tuple[float, float] = (0.175, 0.392),
     ):
         super().__init__()
         self.split_ratios = split_ratios
+
         self.low_freq_block = nn.Sequential(
-            SULayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[0]),
+            SDLayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[0]),
             nn.GELU(),
             ConvModule(
                 in_channels=in_channels,
@@ -93,7 +94,7 @@ class SUBlock(nn.Module):
         )
 
         self.mid_freq_block = nn.Sequential(
-            SULayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[1]),
+            SDLayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[1]),
             nn.GELU(),
             ConvModule(
                 in_channels=in_channels,
@@ -105,7 +106,7 @@ class SUBlock(nn.Module):
         )
 
         self.high_freq_block = nn.Sequential(
-            SULayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[2]),
+            SDLayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[2]),
             nn.GELU(),
             ConvModule(
                 in_channels=in_channels,
@@ -146,25 +147,61 @@ class SUBlock(nn.Module):
         s = torch.cat([l, m, h], dim=3)   # (B, C_in, H, W')
         e = self.last_conv(s)             # (B, C_out, H, W')
 
-        return e
+        return s, e
 
-class Decoder(nn.Module):
+class Encoder(nn.Module):
     def __init__(
         self,
-        out_channels: int = 2
+        sample_rate: int = 44100,
+        n_fft: int = 4096,
+        hop_length: int = 1024,
+        win_length: int = 4096,
+        in_channels: int = 2,
     ):
         super().__init__()
-        c0, c1, c2, c3 = 128, 64, 32, 2 * out_channels
+
+        self.sample_rate = sample_rate
+        self.n_fft = n_fft
+        self.hop_length = hop_length
+        self.win_length = win_length
+        self.window = torch.hann_window(win_length)
+
+        c0, c1, c2, c3 = 2 * in_channels, 32, 64, 128
 
         self.c_list = (c0, c1, c2, c3)
 
-        self.su1 = SUBlock(in_channels=c0, out_channels=c1, kernel_size=3)
-        self.su2 = SUBlock(in_channels=c1, out_channels=c2, kernel_size=3)
-        self.su3 = SUBlock(in_channels=c2, out_channels=c3, kernel_size=3)
+        self.sd1 = SDBlock(in_channels=c0, out_channels=c1, kernel_size=3)
+        self.sd2 = SDBlock(in_channels=c1, out_channels=c2, kernel_size=3)
+        self.sd3 = SDBlock(in_channels=c2, out_channels=c3, kernel_size=3)
 
-    def forward(self, x: torch.Tensor):
-        E1 = self.su1(x)   # (B, 32, T1, F1)
-        E2 = self.su2(E1)   # (B, 64, T2, F2)
-        E3 = self.su3(E2)   # (B, 128, T3, F3)
+    def stft_encode(self, wave: torch.Tensor) -> torch.Tensor:
+        B, M, N = wave.shape
+        device = wave.device
 
-        return E3
+        window = self.window.to(device)
+        wave_flat = wave.reshape(B * M, N)
+
+        stft_c = torch.stft(
+            wave_flat,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            window=window,
+            return_complex=True,
+        )
+
+        stft_ri = torch.view_as_real(stft_c)
+        stft_ri = stft_ri.permute(0, 3, 2, 1)
+        X = stft_ri.reshape(B, M * 2, stft_ri.size(2), stft_ri.size(3))
+
+        return X
+
+    def forward(self, wave: torch.Tensor):
+        X0 = self.stft_encode(wave)
+
+        S1, E1 = self.sd1(X0)
+        S2, E2 = self.sd2(E1)
+        S3, E3 = self.sd3(E2)
+
+        skips = [S1, S2, S3]
+        return skips, E3
