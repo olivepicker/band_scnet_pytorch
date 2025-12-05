@@ -149,7 +149,7 @@ class SDBlock(nn.Module):
 
         return s, e
 
-class BandSCNetEncoder(nn.Module):
+class Encoder(nn.Module):
     def __init__(
         self,
         sample_rate: int = 44100,

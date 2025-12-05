@@ -148,7 +148,7 @@ class SUBlock(nn.Module):
 
         return e
 
-class BandSCNetDecoder(nn.Module):
+class Decoder(nn.Module):
     def __init__(
         self,
         out_channels: int = 2

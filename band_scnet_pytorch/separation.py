@@ -8,38 +8,57 @@ class FConv(nn.Module):
     def __init__(self, in_channels, kernel_size=5, groups=8):
         super().__init__()
         self.blk = nn.Sequential(
-            Rearrange('b c h f -> b h f c'),
+            Rearrange('b c t f -> (b t) f c'),
             nn.LayerNorm(in_channels),
-            Rearrange('b h f c -> b c (h f)'),
+            Rearrange('bt f c -> bt c f'),
             nn.Conv1d(in_channels = in_channels, out_channels = in_channels, kernel_size=kernel_size,groups=groups, padding='same'),
-            nn.PReLU(in_channels)
+            nn.PReLU(in_channels),
         )
+
     def forward(self, x):
+        B = x.size(0)
+        x = self.blk(x)
+        x = rearrange(x, '(b t) c f -> b c t f', b=B)
         
-        return self.blk(x)
+        return x
     
 class FullBandLinearModule(nn.Module):
-    def __init__(self, dim_hidden, dim_squeeze, num_freqs=3):
+    def __init__(self, dim_hidden, dim_squeeze, num_freqs=56):
         super().__init__()
+        self.dim_squeeze = dim_squeeze
         self.norm = nn.LayerNorm(dim_hidden)
+
+        self.freq_linears = nn.ModuleList([
+            nn.Linear(num_freqs, num_freqs) for _ in range(dim_squeeze)
+        ])
+
         self.squeeze = nn.Sequential(
             nn.Linear(dim_hidden, dim_squeeze),
             nn.SiLU()
         )
-
-        self.full = nn.Linear(num_freqs, num_freqs)
         self.unsqueeze = nn.Sequential(
             nn.Linear(dim_squeeze, dim_hidden),
             nn.SiLU()
         )
 
-    def forward(self, x):
+    def forward(self, x): # x: b c t f
+        B, C, T, F = x.size()
+        x = rearrange(x, 'b c t f -> (b t) f c')
         x = self.norm(x)
+
         x = self.squeeze(x)
-        x = rearrange(x, 'b c f -> b f c')
-        x = self.full(x)
-        x = rearrange(x, 'b f c -> b c f')
+        x = rearrange(x, 'bt f c -> bt c f')
+
+        outs = []
+        for i, layer in enumerate(self.freq_linears):
+            yi = layer(x[:,i,:]).unsqueeze(1)
+            outs.append(yi)
+
+        x = torch.cat(outs, dim=1)
+
+        x = rearrange(x, 'bt c f -> bt f c')
         x = self.unsqueeze(x)
+        x = rearrange(x, '(b t) f c -> b c t f', t = T)
 
         return x
 
@@ -51,15 +70,10 @@ class CrossBandBlock(nn.Module):
         self.fconv1 = FConv(dim_hidden, kernel_size=3)
 
     def forward(self, x):
-        B, C, H, F = x.size()
+        B, C, T, F = x.size()
         f0 = self.fconv0(x) + x
-        f0 = rearrange(f0, 'b c (h f) -> (b h) f c', b=B, h=H)
-
         fblm = self.fblm(f0) + f0
-        fblm = rearrange(fblm, '(b h) f c -> b c h f', b=B)
-        
-        f1 = self.fconv1(fblm)  
-        f1 = rearrange(f1, 'b c (h f) -> b c h f', h=H) + fblm
+        f1 = self.fconv1(fblm) + fblm
 
         return f1
 
@@ -71,9 +85,12 @@ class MHSA(nn.Module):
         self.dropout = nn.Dropout(drop_rate)
 
     def forward(self, x, attn_mask=None):
+        B = x.size(0)
+        x = rearrange(x, 'b c t f -> (b t) f c')
         x = self.norm(x)
         x, attn = self.mhsa(x, x, x, attn_mask=attn_mask)
         x = self.dropout(x)
+        x = rearrange(x, '(b t) f c -> b c t f', b=B)
 
         return x, attn
 
@@ -101,13 +118,17 @@ class TConvFFN(nn.Module):
         self.dropout = nn.Dropout(drop_rate)
     
     def forward(self, x):
+        B = x.size(0)
+
+        x = rearrange(x, 'b c t f -> (b t) f c')
         x = self.norm0(x)
         x = self.blk0(x)
-        x = rearrange(x, 'b f c -> b c f')
+        x = rearrange(x, 'bt f c -> bt c f')
         x = self.blk1(x)
-        x = rearrange(x, 'b c f -> b f c')
+        x = rearrange(x, 'bt c f -> bt f c')
         x = self.blk2(x)
         x = self.dropout(x)
+        x = rearrange(x, '(b t) f c -> b c t f', b=B)
 
         return x
 
@@ -119,15 +140,30 @@ class NarrowBandBlock(nn.Module):
     
     def forward(self, x):
         B = x.size(0)
-        x = rearrange(x, 'b c h f -> (b h) f c')
-        
+
         x_mhsa, attn = self.mhsa(x)
         x_mhsa = x + x_mhsa
         
         x_ffn = self.ffn(x_mhsa)
         x_ffn = x_mhsa + x_ffn
-        x = rearrange(x_ffn, '(b h) f c -> b c h f', b=B)
 
         return x
     
-#class SeparationNet(nn.Module):
+class SeparationNet(nn.Module):
+    def __init__(self, dim_hidden, dim_squeeze, dim_ffn, num_freqs):
+        super().__init__()
+        self.crossband = CrossBandBlock(
+            dim_hidden=dim_hidden,
+            dim_squeeze=dim_squeeze,
+            num_freqs=num_freqs
+        )
+        self.narrowband = NarrowBandBlock(
+            dim_hidden=dim_hidden,
+            dim_ffn=dim_ffn
+        )
+    
+    def forward(self, x):
+        x = self.crossband(x)
+        x = self.narrowband(x)
+
+        return x

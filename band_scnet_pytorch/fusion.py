@@ -12,13 +12,13 @@ class CSAFusion(nn.Module):
         super().__init__()
         self.cmhsa = CMHSA(dim, num_heads=num_heads)
         self.gate = nn.Sequential(
-            nn.Conv2d(),
-            nn.LayerNorm(),
-            nn.Linear(),
+            nn.Conv2d(dim, dim, kernel_size=2, stride=2),
+            nn.LayerNorm(dim),
+            nn.Linear(dim, dim),
             nn.Sigmoid(),
-            nn.Conv2d()
+            nn.Conv2d(dim, dim)
         )
-        self.glu = GLU()
+        self.glu = GLU(dim)
         
     def forward(self, x):
         x_cmhsa = self.cmhsa(x)
@@ -30,10 +30,10 @@ class CSAFusion(nn.Module):
     
 class CMHSA(nn.Module):
     def __init__(
-        self, 
-        dim, 
-        in_channels, 
-        num_heads = 4,        
+        self,
+        dim,
+        in_channels,
+        num_heads = 4,
     ):
         super().__init__()
         self.to_q = nn.Linear(
@@ -67,7 +67,7 @@ class CMHSA(nn.Module):
         return x
 
 class GLU(nn.Module):
-    def __init__(self):
+    def __init__(self, dim):
         super().__init__()
         self.conv = nn.Conv2d()
         self.act = nn.Sigmoid()
