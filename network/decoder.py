@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 
 from typing import Union, Tuple, Sequence
-from encoder import ConvModule
+from .encoder import ConvModule
 
 class SULayer(nn.Module):
     def __init__(

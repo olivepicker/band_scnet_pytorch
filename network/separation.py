@@ -8,6 +8,8 @@ class FConv(nn.Module):
     def __init__(self, in_channels, kernel_size=5, groups=8):
         super().__init__()
         self.blk = nn.Sequential(
+            Rearrange('b c t f -> (b t) f c'),
+            nn.LayerNorm(in_channels),
             Rearrange('bt f c -> bt c f'),
             nn.Conv1d(in_channels = in_channels, out_channels = in_channels, kernel_size=kernel_size,groups=groups, padding='same'),
             nn.PReLU(in_channels),
@@ -63,16 +65,12 @@ class FullBandLinearModule(nn.Module):
 class CrossBandBlock(nn.Module):
     def __init__(self, dim_hidden, dim_squeeze, num_freqs):
         super().__init__()
-        self.norm = nn.LayerNorm(dim_hidden)
         self.fconv0 = FConv(dim_hidden, kernel_size=3)
         self.fblm = FullBandLinearModule(dim_hidden, dim_squeeze, num_freqs)
         self.fconv1 = FConv(dim_hidden, kernel_size=3)
 
     def forward(self, x):
         B, C, T, F = x.size()
-
-        x = rearrange(x, 'b c t f -> (b t) f c')
-        x = self.norm(x)
         x_f0 = x + self.fconv0(x)
         x_fblm = x_f0 + self.fblm(x_f0)
         x_f1 = x_fblm + self.fconv1(x_fblm)
