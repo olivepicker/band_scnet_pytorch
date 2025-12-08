@@ -20,7 +20,8 @@ class BandSCNet(nn.Module):
         enc_hop_length: int = 1024,
         enc_win_length: int = 4096,
         enc_in_channels: int = 2,
-        dec_out_channels: int = 4,
+        dec_out_channels: int = 2,
+        fusion_num_heads: int= 4,
         sep_dim_squeeze: int = 64, 
         sep_dim_ffn: int = 64, 
         sep_num_freqs: int = 56
@@ -29,18 +30,29 @@ class BandSCNet(nn.Module):
         self.encoder = Encoder(
     
         )
-        # self.fusion = CSAFusion()
-        self.separation = SeparationNet(
-            dim_hidden, sep_dim_squeeze, sep_dim_ffn, sep_num_freqs
+        self.fusion = CSAFusion(
+            dim_hidden, fusion_num_heads
         )
-        self.decoder = Decoder(
+        self.separation = nn.ModuleList()
+        for _ in range(3):
+            self.separation.append(SeparationNet(
+                dim_hidden, sep_dim_squeeze, sep_dim_ffn, sep_num_freqs
+        ))
+        
+        _decoder = Decoder(
             out_channels=dec_out_channels
+        )
+
+        self.decoder = nn.ModuleList(
+            [_decoder.su1, _decoder.su2, _decoder.su3]
         )
     
     def forward(self, x):
-        skips, x = self.encoder(x)
-        # self.fusion(x)
-        x = self.separation(x)
-        x = self.decoder(x)
+        skips, e3 = self.encoder(x)
+        g = self.separation(e3)
 
-        return x
+        for f, s, d in zip(self.fusion, skips, self.decoder):
+            fused = f(s, g)
+            g = d(fused)
+        
+        return g

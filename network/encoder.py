@@ -79,13 +79,12 @@ class SDBlock(nn.Module):
     ):
         super().__init__()
         self.split_ratios = split_ratios
-
         self.low_freq_block = nn.Sequential(
-            SDLayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[0]),
+            SDLayer(in_channels=in_channels, out_channels=out_channels, stride_f=strides[0]),
             nn.GELU(),
             ConvModule(
-                in_channels=in_channels,
-                out_channels=in_channels,
+                in_channels=out_channels,
+                out_channels=out_channels,
                 kernel_size=kernel_size,
                 num_modules=3,
                 activation_cls=nn.ReLU,
@@ -93,11 +92,11 @@ class SDBlock(nn.Module):
         )
 
         self.mid_freq_block = nn.Sequential(
-            SDLayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[1]),
+            SDLayer(in_channels=in_channels, out_channels=out_channels, stride_f=strides[1]),
             nn.GELU(),
             ConvModule(
-                in_channels=in_channels,
-                out_channels=in_channels,
+                in_channels=out_channels,
+                out_channels=out_channels,
                 kernel_size=kernel_size,
                 num_modules=2,
                 activation_cls=nn.ReLU,
@@ -105,11 +104,11 @@ class SDBlock(nn.Module):
         )
 
         self.high_freq_block = nn.Sequential(
-            SDLayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[2]),
+            SDLayer(in_channels=in_channels, out_channels=out_channels, stride_f=strides[2]),
             nn.GELU(),
             ConvModule(
-                in_channels=in_channels,
-                out_channels=in_channels,
+                in_channels=out_channels,
+                out_channels=out_channels,
                 kernel_size=kernel_size,
                 num_modules=1,
                 activation_cls=nn.ReLU,
@@ -117,7 +116,7 @@ class SDBlock(nn.Module):
         )
 
         self.last_conv = nn.Conv2d(
-            in_channels=in_channels,
+            in_channels=out_channels,
             out_channels=out_channels,
             kernel_size=1,
             bias=False,
@@ -196,11 +195,11 @@ class Encoder(nn.Module):
         return X
 
     def forward(self, wave: torch.Tensor):
-        X0 = self.stft_encode(wave)
+        x = self.stft_encode(wave)
+        print(x.size())
+        s1, e1 = self.sd1(x)
+        s2, e2 = self.sd2(e1)
+        s3, e3 = self.sd3(e2)
 
-        S1, E1 = self.sd1(X0)
-        S2, E2 = self.sd2(E1)
-        S3, E3 = self.sd3(E2)
-
-        skips = [S1, S2, S3]
-        return skips, E3
+        skips = [s1, s2, s3]
+        return skips, e3

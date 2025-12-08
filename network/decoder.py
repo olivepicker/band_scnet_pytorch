@@ -36,17 +36,17 @@ class SUBlock(nn.Module):
         in_channels: int,
         out_channels: int,
         kernel_size: Union[int, Tuple[int, int]],
-        strides: Sequence[int] = (16, 4, 1),
+        strides: Sequence[int] = (1, 4, 16),
         split_ratios: Tuple[float, float] = (0.175, 0.392),
     ):
         super().__init__()
         self.split_ratios = split_ratios
         self.low_freq_block = nn.Sequential(
-            SULayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[0]),
+            SULayer(in_channels=in_channels, out_channels=out_channels, stride_f=strides[0]),
             nn.GELU(),
             ConvModule(
-                in_channels=in_channels,
-                out_channels=in_channels,
+                in_channels=out_channels,
+                out_channels=out_channels,
                 kernel_size=kernel_size,
                 num_modules=3,
                 activation_cls=nn.ReLU,
@@ -54,11 +54,11 @@ class SUBlock(nn.Module):
         )
 
         self.mid_freq_block = nn.Sequential(
-            SULayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[1]),
+            SULayer(in_channels=in_channels, out_channels=out_channels, stride_f=strides[1]),
             nn.GELU(),
             ConvModule(
-                in_channels=in_channels,
-                out_channels=in_channels,
+                in_channels=out_channels,
+                out_channels=out_channels,
                 kernel_size=kernel_size,
                 num_modules=2,
                 activation_cls=nn.ReLU,
@@ -66,11 +66,11 @@ class SUBlock(nn.Module):
         )
 
         self.high_freq_block = nn.Sequential(
-            SULayer(in_channels=in_channels, out_channels=in_channels, stride_f=strides[2]),
+            SULayer(in_channels=in_channels, out_channels=out_channels, stride_f=strides[2]),
             nn.GELU(),
             ConvModule(
-                in_channels=in_channels,
-                out_channels=in_channels,
+                in_channels=out_channels,
+                out_channels=out_channels,
                 kernel_size=kernel_size,
                 num_modules=1,
                 activation_cls=nn.ReLU,
@@ -78,7 +78,7 @@ class SUBlock(nn.Module):
         )
 
         self.last_conv = nn.Conv2d(
-            in_channels=in_channels,
+            in_channels=out_channels,
             out_channels=out_channels,
             kernel_size=1,
             bias=False,
@@ -124,8 +124,8 @@ class Decoder(nn.Module):
         self.su3 = SUBlock(in_channels=c2, out_channels=c3, kernel_size=3)
 
     def forward(self, x: torch.Tensor):
-        E1 = self.su1(x)
-        E2 = self.su2(E1)
-        E3 = self.su3(E2)
+        x = self.su1(x)
+        x = self.su2(x)
+        x = self.su3(x)
 
-        return E3
+        return x

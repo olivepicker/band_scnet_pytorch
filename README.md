@@ -4,8 +4,9 @@ Unofficial implementation proposed [Band-SCNet](https://www.isca-archive.org/int
 
 ## Todo
 - [x] Encoder / Decoder baseline
+	- [ ] Decoder - fix ConvTranspose2d for deconvolution
 - [x] Separation Network
-- [ ] Fusion Network
+- [x] Fusion Network
 - [ ] Skip Connections
 - [ ] Train / Valid
 - [ ] AMC Internal test

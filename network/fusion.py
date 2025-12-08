@@ -12,19 +12,19 @@ def _rearrange_ln(channels):
         Rearrange('b t f c -> b c t f'),
     )
 
-class CSAFusionT(nn.Module):
+class CSAFusion(nn.Module):
     def __init__(
         self, 
         dim,
-        gate_channels,
         num_heads=4,
     ):
         super().__init__()
         self.cmhsa = CMHSA(dim, num_heads=num_heads)
-        self.gate = LinearGate(gate_channels)
+        self.gate = LinearGate(dim)
         self.glu = GLU(dim, dim)
         
-    def forward(self, x):
+    def forward(self, s, g):
+        x = s + g
         x_cmhsa = self.cmhsa(x)
         x_gate = self.gate(x)
         x = x_cmhsa * x_gate
@@ -137,12 +137,6 @@ class Attention(nn.Module):
         q = rearrange(q, 'b (h cd) t f -> b h t (cd f)', h=H, cd=Cd)
         k = rearrange(k, 'b (h cd) t f -> b h t (cd f)', h=H, cd=Cd)
         v = rearrange(v, 'b (h c) t f -> b h t (c f)', h=H, c=C_per_head)
-
-        print(q.size(), k.size(), v.size())
-        # shapes:
-        #   q: (B, H, T, Dq)   Dq = Cd*F
-        #   k: (B, H, T, Dq)
-        #   v: (B, H, T, Dv)   Dv = (Ci/H)*F
 
         Dq = q.size(-1)
         attn_scores = torch.matmul(q, k.transpose(-1, -2)) / math.sqrt(Dq)  # (B, H, T, T)
