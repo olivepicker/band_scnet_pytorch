@@ -39,6 +39,7 @@ class BandSCNet(nn.Module):
     
     def forward(self, x):
         skips, x = self.encoder(x)
+        # self.fusion(x)
         x = self.separation(x)
         x = self.decoder(x)
 

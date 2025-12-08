@@ -6,6 +6,7 @@ Unofficial implementation proposed [Band-SCNet](https://www.isca-archive.org/int
 - [x] Encoder / Decoder baseline
 - [x] Separation Network
 - [ ] Fusion Network
+- [ ] Skip Connections
 - [ ] Train / Valid
 - [ ] AMC Internal test
 
