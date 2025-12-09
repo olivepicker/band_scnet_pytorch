@@ -32,11 +32,11 @@ class BandSCNet(nn.Module):
         window = torch.hann_window(self.win_length)
         self.register_buffer("window", window, persistent=False)
 
-        c0 = 2 * enc_in_channels
-        dims = (c0, dim_hidden//4, dim_hidden//2, dim_hidden)
+        enc_dims = (2 * enc_in_channels, dim_hidden//4, dim_hidden//2, dim_hidden)
+        dec_dims = (dim_hidden, dim_hidden//2, dim_hidden//4, 2 * dec_out_channels)
 
-        self.encoder = Encoder(dims=dims)
-        self.decoder = Decoder(fusion_dim=fusion_dim, dims=dims)
+        self.encoder = Encoder(dims=enc_dims)
+        self.decoder = Decoder(fusion_dim=fusion_dim, dims=dec_dims)
         self.separation = SeparationNet(dim_hidden, sep_dim_squeeze, sep_dim_ffn)
 
     def stft_encode(self, wave: torch.Tensor) -> Tuple[torch.Tensor, int]:

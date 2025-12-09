@@ -107,7 +107,7 @@ class Decoder(nn.Module):
     ):
         super().__init__()
         ups = []
-        for cin, cout in zip(dims[:0:-1], dims[-2::-1]):  # (C3->C2), (C2->C1), (C1->C0)
+        for cin, cout in zip(dims[0:-1], dims[1:]):  # (C3->C2), (C2->C1), (C1->C0)
             ups.append(
                 SUBlock(
                     fusion_dim=fusion_dim,
