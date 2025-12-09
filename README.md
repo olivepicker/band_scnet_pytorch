@@ -4,12 +4,16 @@ Unofficial implementation proposed [Band-SCNet](https://www.isca-archive.org/int
 
 ## Todo
 - [x] Encoder / Decoder baseline
-	- [ ] Decoder - fix ConvTranspose2d for deconvolution
+	- [x] Decoder - fix ConvTranspose2d for deconvolution
+	- [ ] Decoder - validate crop/pad in SULayer
 - [x] Separation Network
 - [x] Fusion Network
-- [ ] Skip Connections
-- [ ] Train / Valid
+- [x] Skip Connections
+- [ ] Implement Loss
+- [ ] Train / Valid pipeline
 - [ ] AMC Internal test
+
+## Usage
 
 ## Citations
 

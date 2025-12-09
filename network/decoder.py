@@ -1,11 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
-from typing import Union, Tuple, Sequence, List
+from typing import Sequence, List
 from .fusion import CSAFusion
-from .encoder import ConvModule
 
 class SULayer(nn.Module):
     def __init__(
@@ -31,7 +29,6 @@ class SULayer(nn.Module):
     def forward(self, x_band: torch.Tensor, origin_length: int) -> torch.Tensor:
         y = self.deconv(x_band)  # (B, C_out, T, F_up)
         F_up = y.size(-1)
-        print(y.size(), origin_length)
 
         if F_up > origin_length:
             diff = F_up - origin_length
