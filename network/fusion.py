@@ -16,12 +16,13 @@ class CSAFusion(nn.Module):
     def __init__(
         self, 
         dim,
+        in_channels,
         num_heads=4,
     ):
         super().__init__()
-        self.cmhsa = CMHSA(dim, num_heads=num_heads)
-        self.gate = LinearGate(dim)
-        self.glu = GLU(dim, dim)
+        self.cmhsa = CMHSA(dim=dim, in_channels=in_channels, num_heads=num_heads)
+        self.gate = LinearGate(in_channels, kernel_size_f=2, stride_f=2)
+        self.glu = GLU(in_channels, in_channels)
         
     def forward(self, s, g):
         x = s + g
@@ -37,7 +38,7 @@ class LinearGate(nn.Module):
         self,
         channels,
         kernel_size_f=2,
-        stride_f=3,
+        stride_f=2,
     ):
         super().__init__()
         padding_f = kernel_size_f // 2 
@@ -49,7 +50,7 @@ class LinearGate(nn.Module):
             padding=(0, padding_f),
             bias=False,
         )
-        # F축 upsample: ConvTranspose2d
+
         self.up = nn.ConvTranspose2d(
             in_channels=channels,
             out_channels=channels,
@@ -83,66 +84,77 @@ class LinearGate(nn.Module):
         y_gate = rearrange(y_gate, '(b c t) f -> b c t f', b=B, c=C, t=T)
         y_gate = self.up(y_gate)
 
+        F_up = y_gate.size(-1)
+
+        if F_up > F:
+            diff = F_up - F
+            left = diff // 2
+            right = diff - left
+            y_gate = y_gate[..., left:F_up-right]
+
+        elif F_up < F:
+            diff = F - F_up
+            left = diff // 2
+            right = diff - left
+            y_gate = torch.nn.functional.pad(
+                y_gate, (left, right, 0, 0)
+            )
+
         return y_gate
 
 class Attention(nn.Module):
     def __init__(
         self,
-        dim,
-        in_channels = 128,
-        num_freqs = 54,
-        num_heads = 4,
+        dim: int,
+        in_channels: int,
+        num_heads: int = 4,
     ):
         super().__init__()
+        assert dim % num_heads == 0, "dim must be divisible by num_heads"
+
         self.in_channels = in_channels
         self.dim = dim
-        self.num_freqs = num_freqs
         self.num_heads = num_heads
+        self.head_dim = dim // num_heads
 
-        self.Cd = math.ceil(self.dim / self.num_freqs)
-        qk_out_dim = self.Cd * num_heads
-        v_out_dim = self.in_channels // num_heads * num_heads
         self.q_proj = nn.Sequential(
-            nn.Conv2d(in_channels, qk_out_dim, kernel_size=1, bias=False),
-            nn.PReLU(qk_out_dim),
-            _rearrange_ln(qk_out_dim),
-
+            nn.Conv2d(in_channels, dim, kernel_size=1, bias=False),
+            nn.PReLU(dim),
+            _rearrange_ln(dim),
         )
 
         self.k_proj = nn.Sequential(
-            nn.Conv2d(in_channels, qk_out_dim, kernel_size=1, bias=False),
-            nn.PReLU(qk_out_dim),
-            _rearrange_ln(qk_out_dim),
+            nn.Conv2d(in_channels, dim, kernel_size=1, bias=False),
+            nn.PReLU(dim),
+            _rearrange_ln(dim),
         )
 
+        v_out_dim = in_channels
         self.v_proj = nn.Sequential(
             nn.Conv2d(in_channels, v_out_dim, kernel_size=1, bias=False),
             nn.PReLU(v_out_dim),
             _rearrange_ln(v_out_dim),
         )
 
-        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=num_heads, batch_first=True)
-        
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         B, C, T, F = x.size()
-        q, k, v = self.q_proj(x), self.k_proj(x), self.v_proj(x)
-        q = self.q_proj(x)   # (B, H*Cd, T, F)
-        k = self.k_proj(x)   # (B, H*Cd, T, F)
-        v = self.v_proj(x)   # (B, H*C_per_head, T, F) ~= (B, Ci, T, F)
-
         H = self.num_heads
-        Cd = self.Cd
-        C_per_head = self.in_channels // self.num_heads
+        Hd = self.head_dim
+        C_per_head = self.in_channels // H
 
-        q = rearrange(q, 'b (h cd) t f -> b h t (cd f)', h=H, cd=Cd)
-        k = rearrange(k, 'b (h cd) t f -> b h t (cd f)', h=H, cd=Cd)
-        v = rearrange(v, 'b (h c) t f -> b h t (c f)', h=H, c=C_per_head)
+        q = self.q_proj(x)   # (B, dim,   T, F)
+        k = self.k_proj(x)   # (B, dim,   T, F)
+        v = self.v_proj(x)   # (B, C_in,  T, F)
+
+        q = rearrange(q, 'b (h d) t f -> b h t (d f)', h=H, d=Hd)                 # (B, H, T, Hd*F)
+        k = rearrange(k, 'b (h d) t f -> b h t (d f)', h=H, d=Hd)                 # (B, H, T, Hd*F)
+        v = rearrange(v, 'b (h c) t f -> b h t (c f)', h=H, c=C_per_head)         # (B, H, T, (Ci/H*F))
 
         Dq = q.size(-1)
         attn_scores = torch.matmul(q, k.transpose(-1, -2)) / math.sqrt(Dq)  # (B, H, T, T)
-        attn_weights = attn_scores.softmax(dim=-1)                          # (B, H, T, T)
+        attn_weights = attn_scores.softmax(dim=-1)
 
-        out = torch.matmul(attn_weights, v)  # (B, H, T, Dv)
+        out = torch.matmul(attn_weights, v)  # (B, H, T, (Ci/H*F))
 
         out = rearrange(
             out,
@@ -150,24 +162,23 @@ class Attention(nn.Module):
             h=H,
             c=C_per_head,
             f=F,
-        )  # (B, Ci, T, F)
-        return out, q, k, v
+        )
 
+        return out, q, k, v
 
 class CMHSA(nn.Module):
     def __init__(
         self,
         dim,
-        in_channels = 128,
-        num_freqs = 54,
+        in_channels,
         num_heads = 4,
     ):
         super().__init__()
-        self.attn = Attention(dim, in_channels, num_freqs, num_heads)
+        self.attn = Attention(dim, in_channels, num_heads)
         self.head = nn.Sequential(
-            nn.Conv2d(dim, dim, kernel_size=1, bias=False),
+            nn.Conv2d(in_channels, in_channels, kernel_size=1, bias=False),
             nn.PReLU(),
-            _rearrange_ln(dim)
+            _rearrange_ln(in_channels)
         )
         
     def forward(self, x):

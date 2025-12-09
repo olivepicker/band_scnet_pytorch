@@ -23,14 +23,12 @@ class FConv(nn.Module):
         return x
     
 class FullBandLinearModule(nn.Module):
-    def __init__(self, dim_hidden, dim_squeeze, num_freqs=56):
+    def __init__(self, dim_hidden, dim_squeeze):
         super().__init__()
         self.dim_squeeze = dim_squeeze
         self.norm = nn.LayerNorm(dim_hidden)
 
-        self.freq_linears = nn.ModuleList([
-            nn.Linear(num_freqs, num_freqs) for _ in range(dim_squeeze)
-        ])
+        self.freq_linears = None
 
         self.squeeze = nn.Sequential(
             nn.Linear(dim_hidden, dim_squeeze),
@@ -41,6 +39,11 @@ class FullBandLinearModule(nn.Module):
             nn.SiLU()
         )
 
+    def _build_freq_linear(self, f: int):
+        self.freq_linears = nn.ModuleList([
+            nn.Linear(f, f) for _ in range(self.dim_squeeze)
+        ])
+
     def forward(self, x): # x: b c t f
         B, C, T, F = x.size()
         x = rearrange(x, 'b c t f -> (b t) f c')
@@ -48,6 +51,9 @@ class FullBandLinearModule(nn.Module):
 
         x = self.squeeze(x)
         x = rearrange(x, 'bt f c -> bt c f')
+
+        if self.freq_linears is None:
+            self._build_freq_linear(F)
 
         outs = []
         for i, layer in enumerate(self.freq_linears):
@@ -63,10 +69,10 @@ class FullBandLinearModule(nn.Module):
         return x
 
 class CrossBandBlock(nn.Module):
-    def __init__(self, dim_hidden, dim_squeeze, num_freqs):
+    def __init__(self, dim_hidden, dim_squeeze):
         super().__init__()
         self.fconv0 = FConv(dim_hidden, kernel_size=3)
-        self.fblm = FullBandLinearModule(dim_hidden, dim_squeeze, num_freqs)
+        self.fblm = FullBandLinearModule(dim_hidden, dim_squeeze)
         self.fconv1 = FConv(dim_hidden, kernel_size=3)
 
     def forward(self, x):
@@ -155,13 +161,11 @@ class SeparationNet(nn.Module):
         dim_hidden, 
         dim_squeeze, 
         dim_ffn, 
-        num_freqs
     ):
         super().__init__()
         self.crossband = CrossBandBlock(
             dim_hidden=dim_hidden,
             dim_squeeze=dim_squeeze,
-            num_freqs=num_freqs
         )
         self.narrowband = NarrowBandBlock(
             dim_hidden=dim_hidden,

@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 
-from typing import Union, Tuple, Sequence
+from typing import Union, Tuple, Sequence, List
+from .fusion import CSAFusion
 from .encoder import ConvModule
 
 class SULayer(nn.Module):
@@ -11,121 +13,132 @@ class SULayer(nn.Module):
         in_channels: int,
         out_channels: int,
         stride_f: int,
-        kernel_size: Tuple[int, int] = (1, 3),
+        kernel_size_f: int = 3,
     ):
         super().__init__()
+        self.stride_f = stride_f
+        self.kernel_size_f = kernel_size_f
 
-        kh, kw = kernel_size
-        padding = (kh // 2, kw // 2)
-
-        self.conv = nn.ConvTranspose2d(
+        self.deconv = nn.ConvTranspose2d(
             in_channels=in_channels,
             out_channels=out_channels,
-            kernel_size=kernel_size,
+            kernel_size=(1, kernel_size_f),
             stride=(1, stride_f),
-            padding=padding,
+            padding=(0, 0),
             bias=False,
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.conv(x)
+    def forward(self, x_band: torch.Tensor, origin_length: int) -> torch.Tensor:
+        y = self.deconv(x_band)  # (B, C_out, T, F_up)
+        F_up = y.size(-1)
+        print(y.size(), origin_length)
+
+        if F_up > origin_length:
+            diff = F_up - origin_length
+            left = diff // 2
+            right = diff - left
+            y = y[..., left:F_up - right]
+        elif F_up < origin_length:
+            diff = origin_length - F_up
+            left = diff // 2
+            right = diff - left
+
+            y = F.pad(y, (left, right, 0, 0))
+
+        return y
 
 class SUBlock(nn.Module):
     def __init__(
         self,
+        fusion_dim: int,
         in_channels: int,
         out_channels: int,
-        kernel_size: Union[int, Tuple[int, int]],
-        strides: Sequence[int] = (1, 4, 16),
-        split_ratios: Tuple[float, float] = (0.175, 0.392),
+        band_strides: Sequence[int] = (1, 4, 16),
+        band_kernels: Sequence[int] = (3, 3, 3),
     ):
         super().__init__()
-        self.split_ratios = split_ratios
-        self.low_freq_block = nn.Sequential(
-            SULayer(in_channels=in_channels, out_channels=out_channels, stride_f=strides[0]),
-            nn.GELU(),
-            ConvModule(
-                in_channels=out_channels,
-                out_channels=out_channels,
-                kernel_size=kernel_size,
-                num_modules=3,
-                activation_cls=nn.ReLU,
-            ),
+        assert len(band_strides) == len(band_kernels) == 3
+
+        self.fusion = CSAFusion(fusion_dim, in_channels)
+
+        self.su_layers = nn.ModuleList(
+            [
+                SULayer(
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    stride_f=stride,
+                    kernel_size_f=k_f,
+                )
+                for stride, k_f in zip(band_strides, band_kernels)
+            ]
         )
 
-        self.mid_freq_block = nn.Sequential(
-            SULayer(in_channels=in_channels, out_channels=out_channels, stride_f=strides[1]),
-            nn.GELU(),
-            ConvModule(
-                in_channels=out_channels,
-                out_channels=out_channels,
-                kernel_size=kernel_size,
-                num_modules=2,
-                activation_cls=nn.ReLU,
-            ),
-        )
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_skip: torch.Tensor,
+        sd_lengths: List[int],
+        original_lengths: List[int],
+    ) -> torch.Tensor:
+        x = self.fusion(x, x_skip)  # (B, C_i, T, F_i)
 
-        self.high_freq_block = nn.Sequential(
-            SULayer(in_channels=in_channels, out_channels=out_channels, stride_f=strides[2]),
-            nn.GELU(),
-            ConvModule(
-                in_channels=out_channels,
-                out_channels=out_channels,
-                kernel_size=kernel_size,
-                num_modules=1,
-                activation_cls=nn.ReLU,
-            ),
-        )
+        assert len(sd_lengths) == len(original_lengths) == len(self.su_layers) == 3
+        splits = []
+        cur = 0
+        for L in sd_lengths:
+            splits.append((cur, cur + L))
+            cur += L
 
-        self.last_conv = nn.Conv2d(
-            in_channels=out_channels,
-            out_channels=out_channels,
-            kernel_size=1,
-            bias=False,
-        )
+        bands_out = []
+        for (start, end), su_layer, orig_len in zip(
+            splits, self.su_layers, original_lengths
+        ):
+            x_band = x[..., start:end]  # (B, C_i, T, F_sd)
+            y_band = su_layer(x_band, origin_length=orig_len)  # (B, C_{i-1}, T, F_orig)
+            bands_out.append(y_band)
 
-    def _split_freq(self, x: torch.Tensor):
-        B, C, T, F = x.size()
-        low_r, mid_r = self.split_ratios
-
-        ls = int(F * low_r)
-        ms = int(F * (low_r + mid_r))
-
-        x_low = x[..., :ls]     # (B, C, H, 0:ls)
-        x_mid = x[..., ls:ms]   # (B, C, H, ls:ms)
-        x_high = x[..., ms:]    # (B, C, H, ms:)
-
-        return x_low, x_mid, x_high
-
-    def forward(self, x: torch.Tensor):
-        x_low, x_mid, x_high = self._split_freq(x)
-
-        l = self.low_freq_block(x_low)
-        m = self.mid_freq_block(x_mid)
-        h = self.high_freq_block(x_high)
-
-        s = torch.cat([l, m, h], dim=3)   # (B, C_in, H, W')
-        e = self.last_conv(s)             # (B, C_out, H, W')
-
-        return e
+        y = torch.cat(bands_out, dim=3)  # (B, C_{i-1}, T, F_{i-1})
+        return y
 
 class Decoder(nn.Module):
     def __init__(
         self,
-        out_channels: int = 2
+        fusion_dim: int = 1024,
+        dims: Sequence[int] = (4, 32, 64, 128),
+        band_strides: Sequence[int] = (1, 4, 16),
+        band_kernels: Sequence[int] = (3, 3, 3),
     ):
         super().__init__()
-        c0, c1, c2, c3 = 128, 64, 32, 2 * out_channels
+        ups = []
+        for cin, cout in zip(dims[:0:-1], dims[-2::-1]):  # (C3->C2), (C2->C1), (C1->C0)
+            ups.append(
+                SUBlock(
+                    fusion_dim=fusion_dim,
+                    in_channels=cin,
+                    out_channels=cout,
+                    band_strides=band_strides,
+                    band_kernels=band_kernels,
+                )
+            )
+        self.blocks = nn.ModuleList(ups)
+        self.dims = list(dims)
 
-        self.c_list = (c0, c1, c2, c3)
+    def forward(
+        self,
+        e: torch.Tensor,
+        skips: List[torch.Tensor],
+        sd_lengths_list: List[List[int]],
+        orig_lengths_list: List[List[int]],
+    ) -> torch.Tensor:
+        x = e
 
-        self.su1 = SUBlock(in_channels=c0, out_channels=c1, kernel_size=3)
-        self.su2 = SUBlock(in_channels=c1, out_channels=c2, kernel_size=3)
-        self.su3 = SUBlock(in_channels=c2, out_channels=c3, kernel_size=3)
-
-    def forward(self, x: torch.Tensor):
-        x = self.su1(x)
-        x = self.su2(x)
-        x = self.su3(x)
+        for block, skip, sd_lengths, orig_lengths in zip(
+            self.blocks,
+            reversed(skips),
+            reversed(sd_lengths_list),
+            reversed(orig_lengths_list),
+        ):
+            x = block(x, skip, sd_lengths, orig_lengths)
 
         return x
+
