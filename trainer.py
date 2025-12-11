@@ -64,13 +64,14 @@ class BandSCNetTrainer(nn.Module):
     def train_one_step(self, batch):
         self.model.train()
         self.optimizer.zero_grad()
+
         x = batch['mixture'].to(self.device)
         y = batch['stems'].to(self.device)
 
         with torch.autocast(**self.autocast_config):
             x_hat, y = self.model(x, y)
+            loss = self.criterion(x_hat, y)
 
-        loss = self.criterion(x_hat, y)
         loss.backward()
         self.optimizer.step()
 
@@ -80,14 +81,14 @@ class BandSCNetTrainer(nn.Module):
 
     def valid_one_step(self, batch):
         self.model.eval()
+        
         with torch.no_grad():
             x = batch['mixture'].to(self.device)
             y = batch['stems'].to(self.device)
 
             with torch.autocast(**self.autocast_config):
                 x_hat, y = self.model(x, y)
-
-            loss = self.criterion(x_hat, y)
+                loss = self.criterion(x_hat, y)
 
         return {
             "loss": loss.detach(),

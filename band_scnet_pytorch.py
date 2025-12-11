@@ -48,7 +48,6 @@ class BandSCNet(nn.Module):
             wave = F.pad(wave, (0, padding))
         L_pad = wave.shape[-1]
 
-        window = self.window.to(device)
         wave = wave.reshape(B * S * C, L_pad)
 
         stft_c = torch.stft(
@@ -56,7 +55,8 @@ class BandSCNet(nn.Module):
             n_fft=self.n_fft,
             hop_length=self.hop_length,
             win_length=self.win_length,
-            window=window,
+            window=self.window,
+            center=False,
             normalized=True,
             return_complex=True,
         ) 
