@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from typing import Union, Tuple, Sequence
-
+from einops import rearrange
 from network.decoder import Decoder
 from network.encoder import Encoder
 from network.separation import SeparationNet
@@ -40,16 +40,16 @@ class BandSCNet(nn.Module):
         self.separation = SeparationNet(dim_hidden, sep_dim_squeeze, sep_dim_ffn)
 
     def stft_encode(self, wave: torch.Tensor) -> Tuple[torch.Tensor, int]:
-        B, M, L = wave.shape
+        B, S, C, L = wave.shape
         device = wave.device
 
         padding = (self.hop_length - (L % self.hop_length)) % self.hop_length
         if padding > 0:
-            wave = F.pad(wave, (0, padding))  # (B, M, L+padding)
+            wave = F.pad(wave, (0, padding))
         L_pad = wave.shape[-1]
 
         window = self.window.to(device)
-        wave = wave.reshape(B * M, L_pad)
+        wave = wave.reshape(B * S * C, L_pad)
 
         stft_c = torch.stft(
             wave,
@@ -57,13 +57,13 @@ class BandSCNet(nn.Module):
             hop_length=self.hop_length,
             win_length=self.win_length,
             window=window,
+            normalized=True,
             return_complex=True,
-        )  # (B*M, F, T)
+        ) 
 
-        stft_ri = torch.view_as_real(stft_c)        # (B*M, F, T, 2)
-        stft_ri = stft_ri.permute(0, 3, 2, 1)      # (B*M, 2, T, F)
-        x = stft_ri.reshape(B, M * 2, stft_ri.size(2), stft_ri.size(3))  # (B, 2M, T, F)
-
+        x = torch.view_as_real(stft_c)
+        x = rearrange(x, '(b s c) fr t cp -> b s c fr t cp', b=B, s=S)
+        
         return x, padding
 
     # def istft_decode(self, x: torch.Tensor, padding: int, length: int) -> torch.Tensor:
@@ -90,12 +90,19 @@ class BandSCNet(nn.Module):
     #         wave = wave[..., :-padding]
     #     return wave
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, M, L = x.shape
-        x, padding = self.stft_encode(x)
+    def forward(self, x: torch.Tensor, y=None) -> torch.Tensor:
+        B, S, C, L = x.shape
+        x, pad_x = self.stft_encode(x) # B S C Fr T Cp
+        
+        if y is not None:
+            y, pad_y = self.stft_encode(y) # B S C Fr T Cp
+        
+        B, S, C, Fr, T, Cp = y.size()
+        x = rearrange(x, 'b s c fr t cp -> b (s c cp) t fr')
         e, skips, sd_lengths_list, orig_lengths_list = self.encoder(x)
 
         e = self.separation(e)
-        y = self.decoder(e, skips, sd_lengths_list, orig_lengths_list)
-        #y = self.istft_decode(y, padding=padding, length=L)
-        return y
+        x_hat = self.decoder(e, skips, sd_lengths_list, orig_lengths_list)
+        x_hat = rearrange(x_hat, 'b (s c cp) t fr -> b s c fr t cp', s=S, c=C, cp=Cp)
+
+        return x_hat, y

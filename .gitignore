@@ -3,4 +3,4 @@
 
 # path
 __pycache__
-*dataset
+data/

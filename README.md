@@ -9,8 +9,9 @@ Unofficial implementation proposed [Band-SCNet](https://www.isca-archive.org/int
 - [x] Separation Network
 - [x] Fusion Network
 - [x] Skip Connections
-- [ ] Implement Loss
-- [ ] Train / Valid pipeline
+- [x] Implement Loss
+- [x] Train / Valid pipeline
+	- [ ] Metric
 - [ ] AMC Internal test
 
 ## Usage

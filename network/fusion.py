@@ -69,6 +69,7 @@ class LinearGate(nn.Module):
 
     def forward(self, x):
         B, C, T, F = x.shape
+        device = x.device
 
         y = self.down(x) 
         B, C, T, Fd = y.shape
@@ -78,6 +79,7 @@ class LinearGate(nn.Module):
 
         if self.freq_linear is None:
             self._build_freq_linear(Fd)
+            self.freq_linear.to(device)
 
         y_gate = self.freq_linear(y_flat)
         y_gate = torch.sigmoid(y_gate)

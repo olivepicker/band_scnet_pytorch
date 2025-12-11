@@ -46,6 +46,8 @@ class FullBandLinearModule(nn.Module):
 
     def forward(self, x): # x: b c t f
         B, C, T, F = x.size()
+        device = x.device
+        
         x = rearrange(x, 'b c t f -> (b t) f c')
         x = self.norm(x)
 
@@ -54,6 +56,7 @@ class FullBandLinearModule(nn.Module):
 
         if self.freq_linears is None:
             self._build_freq_linear(F)
+            self.freq_linears.to(device)
 
         outs = []
         for i, layer in enumerate(self.freq_linears):
