@@ -29,7 +29,7 @@ class BandSCNet(nn.Module):
         self.in_channels = enc_in_channels
         self.out_channels = dec_out_channels
 
-        window = torch.hann_window(self.win_length)
+        window = torch.hamming_window(self.win_length)
         self.register_buffer("window", window, persistent=False)
 
         enc_dims = (2 * enc_in_channels, dim_hidden//4, dim_hidden//2, dim_hidden)
@@ -66,35 +66,36 @@ class BandSCNet(nn.Module):
         
         return x, padding
 
-    # def istft_decode(self, x: torch.Tensor, padding: int, length: int) -> torch.Tensor:
-    #     B, C, T, Freq = x.shape
-    #     M = self.in_channels
-    #     assert C == 2 * M, f"expected 2*{M} channels, got {C}"
+    def istft_decode(self, x, padding=0):
+        B, S, C, Fr, T, Cp = x.shape
+        
+        total_len = self.hop_length * (T - 1) + self.win_length
+        x = rearrange(x, 'b s c fr t cp -> (b s c) fr t cp')
+        x_complex = torch.view_as_complex(x)    # (B*M, F, T)
+        wave = torch.istft(
+            x_complex,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            window=self.window,
+            normalized=True,
+            center=False,
+            length=total_len,
+        )
 
-    #     x = x.reshape(B * M, 2, T, Freq)          # (B*M, 2, T, F)
-    #     x = x.permute(0, 3, 2, 1).contiguous()           # (B*M, F, T, 2)
-    #     x_complex = torch.view_as_complex(x)     # (B*M, F, T)
+        wave = rearrange(wave, '(b s c) n -> b s c n', s = S, c = C)
 
-    #     window = self.window.to(x.device)
-    #     wave = torch.istft(
-    #         x_complex,
-    #         n_fft=self.n_fft,
-    #         hop_length=self.hop_length,
-    #         win_length=self.win_length,
-    #         window=window,
-    #         length=length + padding,
-    #     )  # (B*M, L_pad)
-
-    #     wave = wave.view(B, M, -1)
-    #     if padding > 0:
-    #         wave = wave[..., :-padding]
-    #     return wave
+        if padding > 0:
+            wave = wave[..., :-padding]
+            
+        return wave
 
     def forward(self, x: torch.Tensor, y=None) -> torch.Tensor:
         B, S, C, L = x.shape
         x, pad_x = self.stft_encode(x) # B S C Fr T Cp
         
         if y is not None:
+            y_orig = y.clone()
             y, pad_y = self.stft_encode(y) # B S C Fr T Cp
         
         B, S, C, Fr, T, Cp = y.size()
@@ -104,5 +105,6 @@ class BandSCNet(nn.Module):
         e = self.separation(e)
         x_hat = self.decoder(e, skips, sd_lengths_list, orig_lengths_list)
         x_hat = rearrange(x_hat, 'b (s c cp) t fr -> b s c fr t cp', s=S, c=C, cp=Cp)
+        x_recon = self.istft_decode(x_hat, pad_x)
 
-        return x_hat, y
+        return x_hat, y, x_recon, y_orig
