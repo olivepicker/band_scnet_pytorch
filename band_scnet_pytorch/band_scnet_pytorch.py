@@ -91,20 +91,19 @@ class BandSCNet(nn.Module):
         return wave
 
     def forward(self, x: torch.Tensor, y=None) -> torch.Tensor:
-        B, S, C, L = x.shape
         x, pad_x = self.stft_encode(x) # B S C Fr T Cp
-        
+        B, S, C, Fr, T, Cp = x.size()
+
         if y is not None:
             y_orig = y.clone()
             y, pad_y = self.stft_encode(y) # B S C Fr T Cp
-        
-        B, S, C, Fr, T, Cp = y.size()
+         
         x = rearrange(x, 'b s c fr t cp -> b (s c cp) t fr')
         e, skips, sd_lengths_list, orig_lengths_list = self.encoder(x)
 
         e = self.separation(e)
         x_hat = self.decoder(e, skips, sd_lengths_list, orig_lengths_list)
-        x_hat = rearrange(x_hat, 'b (s c cp) t fr -> b s c fr t cp', s=S, c=C, cp=Cp)
+        x_hat = rearrange(x_hat, 'b (s c cp) t fr -> b s c fr t cp', s=self.out_channels//C, c=C, cp=Cp)
         x_recon = self.istft_decode(x_hat, pad_x)
 
         return x_hat, y, x_recon, y_orig

@@ -69,7 +69,7 @@ class BandSCNetTrainer(nn.Module):
         y = batch['stems'].to(self.device)
 
         with torch.autocast(**self.autocast_config):
-            x_hat, y = self.model(x, y)
+            x_hat, y, x_recon, y_orig = self.model(x, y)
             loss = self.criterion(x_hat, y)
 
         loss.backward()
@@ -87,7 +87,7 @@ class BandSCNetTrainer(nn.Module):
             y = batch['stems'].to(self.device)
 
             with torch.autocast(**self.autocast_config):
-                x_hat, y = self.model(x, y)
+                x_hat, y, x_recon, y_orig = self.model(x, y)
                 loss = self.criterion(x_hat, y)
 
         return {
