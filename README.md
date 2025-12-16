@@ -5,7 +5,7 @@ Unofficial implementation proposed [Band-SCNet](https://www.isca-archive.org/int
 ## Todo
 - [x] Encoder / Decoder baseline
 	- [x] Decoder - fix ConvTranspose2d for deconvolution
-	- [ ] Decoder - validate crop/pad in SULayer
+	- [x] Decoder - validate crop/pad in SULayer
 - [x] Separation Network
 - [x] Fusion Network
 - [x] Skip Connections
@@ -15,6 +15,26 @@ Unofficial implementation proposed [Band-SCNet](https://www.isca-archive.org/int
 - [ ] AMC Internal test
 
 ## Usage
+```python
+from dataset import MUSDBDataset
+from band_scnet_pytorch import BandSCNet
+from trainer import BandSCNetTrainer
+
+...
+train_ds = MUSDBDataset(train_df, is_train=True)
+valid_ds = MUSDBDataset(valid_df, is_train=False)
+
+model = BandSCNet(128, enc_in_channels=2, dec_out_channels=8)
+trainer = BandSCNetTrainer(
+    model=model,
+    optimizer=torch.optim.Adam(lr=5e-4, params=m.parameters()),
+    batch_size=2,
+    train_ds=train_ds,
+    valid_ds=valid_ds,
+    device='cuda',
+    autocast_enabled=False, # autocast not been tested!
+)
+```
 
 ## Citations
 
