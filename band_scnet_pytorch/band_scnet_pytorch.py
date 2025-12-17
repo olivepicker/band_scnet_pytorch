@@ -55,7 +55,7 @@ class BandSCNet(nn.Module):
             n_fft=self.n_fft,
             hop_length=self.hop_length,
             win_length=self.win_length,
-            window=self.window,
+            #window=self.window,
             center=False,
             normalized=True,
             return_complex=True,
@@ -77,7 +77,7 @@ class BandSCNet(nn.Module):
             n_fft=self.n_fft,
             hop_length=self.hop_length,
             win_length=self.win_length,
-            window=self.window,
+            #window=self.window,
             normalized=True,
             center=False,
             length=total_len,
@@ -94,6 +94,7 @@ class BandSCNet(nn.Module):
         x, pad_x = self.stft_encode(x) # B S C Fr T Cp
         B, S, C, Fr, T, Cp = x.size()
 
+        y_orig = None
         if y is not None:
             y_orig = y.clone()
             y, pad_y = self.stft_encode(y) # B S C Fr T Cp

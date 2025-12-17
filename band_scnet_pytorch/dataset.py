@@ -24,7 +24,6 @@ class MUSDBDataset(Dataset):
         d = self.df.iloc[idx]
         path = os.path.join(self.data_path, d.path)
         offset = d.indexs
-        #mixture, _ = lib.load(path, sr=44100, mono=False, offset=offset, duration=11)
         
         stem_paths = [path.replace('mixture', n) for n in ['vocals', 'drums', 'bass', 'other']]
         stems = [lib.load(p, sr=44100, mono=False, offset=offset, duration=11)[0] for p in stem_paths]
@@ -33,16 +32,15 @@ class MUSDBDataset(Dataset):
         if self.is_train:
             scale = np.random.uniform(0.7, 1.0, (4, 1, 1))
             stems = stems * scale
-        
-        mixture = torch.sum(stems, 0)
+            mixture = torch.sum(stems, 0)
+
+        else:
+            mixture, _ = lib.load(path, sr=44100, mono=False, offset=offset, duration=11)
+            mixture = torch.tensor(mixture)
 
         out = {}
         out['mixture'] = mixture[None,...].float()
         out['stems'] = stems.float()
-        # out['vocals'] = torch.tensor(stems[0])
-        # out['drums'] = torch.tensor(stems[1])
-        # out['bass'] = torch.tensor(stems[2])
-        # out['other'] = torch.tensor(stems[3])
 
         return out
 
