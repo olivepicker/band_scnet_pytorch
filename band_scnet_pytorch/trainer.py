@@ -2,10 +2,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
+import numpy as np
 
 from torch.utils.data import DataLoader
 from einops import rearrange
 from loss import RMSELoss
+
+def remix_in_batch(stems):
+    B, S, C, T = stems.shape
+    out = stems.clone()
+    for s in range(S):
+        perm = torch.randperm(B, device=stems.device)
+        out[:, s] = stems[perm, s]
+    mix = out.sum(dim=1)
+
+    return mix[:,None,:,:], out
 
 class BandSCNetTrainer(nn.Module):
     def __init__(
@@ -65,8 +76,11 @@ class BandSCNetTrainer(nn.Module):
         self.model.train()
         self.optimizer.zero_grad()
 
-        x = batch['mixture'].to(self.device)
-        y = batch['stems'].to(self.device)
+        p = np.random.uniform()
+        if p < 0.3:
+            x, y = remix_in_batch(stems=batch['stems'].to(self.device))
+        else:
+            x, y = batch['mixture'].to(self.device), batch['stems'].to(self.device)
 
         with torch.autocast(**self.autocast_config):
             x_hat, y, x_recon, y_orig = self.model(x, y)
