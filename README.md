@@ -12,6 +12,7 @@ Unofficial implementation proposed [Band-SCNet](https://www.isca-archive.org/int
 - [x] Implement Loss
 - [x] Train / Valid pipeline
 	- [ ] Metric
+- [ ] Edge Optimization
 - [ ] AMC Internal test
 
 ## Usage
@@ -27,7 +28,7 @@ valid_ds = MUSDBDataset(valid_df, is_train=False)
 model = BandSCNet(128, enc_in_channels=2, dec_out_channels=8)
 trainer = BandSCNetTrainer(
     model=model,
-    optimizer=torch.optim.Adam(lr=5e-4, params=m.parameters()),
+    optimizer=torch.optim.Adam(lr=5e-4, params=model.parameters()),
     batch_size=2,
     train_ds=train_ds,
     valid_ds=valid_ds,

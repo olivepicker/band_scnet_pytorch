@@ -101,7 +101,7 @@ class BandSCNet(nn.Module):
          
         x = rearrange(x, 'b s c fr t cp -> b (s c cp) t fr')
         e, skips, sd_lengths_list, orig_lengths_list = self.encoder(x)
-
+        #print(sd_lengths_list, orig_lengths_list)
         e = self.separation(e)
         x_hat = self.decoder(e, skips, sd_lengths_list, orig_lengths_list)
         x_hat = rearrange(x_hat, 'b (s c cp) t fr -> b s c fr t cp', s=self.out_channels//C, c=C, cp=Cp)

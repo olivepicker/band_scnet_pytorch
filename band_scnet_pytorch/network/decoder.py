@@ -79,6 +79,10 @@ class SUBlock(nn.Module):
     ) -> torch.Tensor:
         x = self.fusion(x, x_skip)  # (B, C_i, T, F_i)
 
+        # for avoid calculation error when ONNX PTQ conversion 
+        sd_lengths = [int(L.item()) if torch.is_tensor(L) else int(L) for L in sd_lengths] 
+        original_lengths = [int(L.item()) if torch.is_tensor(L) else int(L) for L in original_lengths]
+
         assert len(sd_lengths) == len(original_lengths) == len(self.su_layers) == 3
         splits = []
         cur = 0
