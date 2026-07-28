@@ -156,7 +156,7 @@ class NarrowBandBlock(nn.Module):
         x_ffn = self.ffn(x_mhsa)
         x_ffn = x_mhsa + x_ffn
 
-        return x
+        return x_ffn
     
 class SeparationNet(nn.Module):
     def __init__(
