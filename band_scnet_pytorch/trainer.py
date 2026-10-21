@@ -6,7 +6,10 @@ import numpy as np
 
 from torch.utils.data import DataLoader
 from einops import rearrange
-from loss import RMSELoss
+try:
+    from .loss import RMSELoss
+except ImportError:
+    from loss import RMSELoss
 
 def remix_in_batch(stems):
     B, S, C, T = stems.shape

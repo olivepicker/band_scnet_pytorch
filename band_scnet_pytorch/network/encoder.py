@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import math
 
 from typing import Union, Tuple, Sequence, List
+from .causal import CausalConv2d, FrameChannelNorm
 
 class ConvModule(nn.Module):
     def __init__(
@@ -28,14 +29,14 @@ class ConvModule(nn.Module):
             in_ch = in_channels if i == 0 else out_channels
             layers.append(
                 nn.Sequential(
-                    nn.Conv2d(
+                    CausalConv2d(
                         in_channels=in_ch,
                         out_channels=out_channels,
                         kernel_size=k,
                         padding=padding,
                         bias=False,
                     ),
-                    nn.BatchNorm2d(out_channels),
+                    FrameChannelNorm(out_channels),
                     activation_cls(),
                 )
             )
@@ -115,7 +116,7 @@ class SDBlock(nn.Module):
             ]
         )
 
-        self.global_conv = nn.Conv2d(
+        self.global_conv = CausalConv2d(
             in_channels=out_channels,
             out_channels=out_channels,
             kernel_size=conv_kernel,
@@ -136,6 +137,19 @@ class SDBlock(nn.Module):
             (mid_end, F),
         ]
         return splits
+
+    def output_frequency_length(self, f_in: int) -> int:
+        lengths = []
+        for (start, end), stride, k in zip(
+            self._split_freq(f_in), self.band_strides, self.band_kernels
+        ):
+            band_len = end - start
+            if stride == 1:
+                total_padding = k - stride
+            else:
+                total_padding = (stride - band_len % stride) % stride
+            lengths.append((band_len + total_padding - k) // stride + 1)
+        return sum(lengths)
 
     def forward(self, x: torch.Tensor):
         B, C, T, F_in = x.shape
@@ -204,6 +218,14 @@ class Encoder(nn.Module):
             )
         self.blocks = nn.ModuleList(blocks)
         self.dims = list(dims)
+
+    def frequency_lengths(self, input_bins: int) -> List[int]:
+        lengths = []
+        n = input_bins
+        for block in self.blocks:
+            n = block.output_frequency_length(n)
+            lengths.append(n)
+        return lengths
 
     def forward(self, x: torch.Tensor):
         skips = []

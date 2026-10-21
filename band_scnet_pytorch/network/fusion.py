@@ -154,6 +154,8 @@ class Attention(nn.Module):
 
         Dq = q.size(-1)
         attn_scores = torch.matmul(q, k.transpose(-1, -2)) / math.sqrt(Dq)  # (B, H, T, T)
+        future_mask = torch.ones(T, T, device=x.device, dtype=torch.bool).triu(1)
+        attn_scores = attn_scores.masked_fill(future_mask, torch.finfo(attn_scores.dtype).min)
         attn_weights = attn_scores.softmax(dim=-1)
 
         out = torch.matmul(attn_weights, v)  # (B, H, T, (Ci/H*F))

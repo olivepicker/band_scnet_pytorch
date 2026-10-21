@@ -4,9 +4,14 @@ import torch.nn.functional as F
 
 from typing import Union, Tuple, Sequence
 from einops import rearrange
-from network.decoder import Decoder
-from network.encoder import Encoder
-from network.separation import SeparationNet
+try:
+    from .network.decoder import Decoder
+    from .network.encoder import Encoder
+    from .network.separation import SeparationNet
+except ImportError:
+    from network.decoder import Decoder
+    from network.encoder import Encoder
+    from network.separation import SeparationNet
 
 class BandSCNet(nn.Module):
     def __init__(
@@ -23,13 +28,20 @@ class BandSCNet(nn.Module):
     ):
         super().__init__()
 
+        if enc_n_fft <= 0 or enc_hop_length <= 0 or enc_hop_length > enc_n_fft:
+            raise ValueError("Require 0 < hop_length <= n_fft")
+        if enc_win_length != enc_n_fft:
+            raise ValueError(
+                "center=False iSTFT requires full nonzero endpoint window; "
+                "this causal reference implementation requires win_length == n_fft"
+            )
         self.n_fft = enc_n_fft
         self.hop_length = enc_hop_length
         self.win_length = enc_win_length
         self.in_channels = enc_in_channels
         self.out_channels = dec_out_channels
 
-        window = torch.hamming_window(self.win_length)
+        window = torch.ones(self.win_length)
         self.register_buffer("window", window, persistent=False)
 
         enc_dims = (2 * enc_in_channels, dim_hidden//4, dim_hidden//2, dim_hidden)
@@ -39,11 +51,20 @@ class BandSCNet(nn.Module):
         self.decoder = Decoder(fusion_dim=fusion_dim, dims=dec_dims)
         self.separation = SeparationNet(dim_hidden, sep_dim_squeeze, sep_dim_ffn)
 
+        frequencies = self.encoder.frequency_lengths(self.n_fft // 2 + 1)
+        self.separation.crossband.fblm._build_freq_linear(frequencies[-1])
+        for block, freq in zip(self.decoder.blocks, reversed(frequencies)):
+            down_freq = freq // 2 + 1
+            block.fusion.gate._build_freq_linear(down_freq)
+
     def stft_encode(self, wave: torch.Tensor) -> Tuple[torch.Tensor, int]:
         B, S, C, L = wave.shape
         device = wave.device
 
-        padding = (self.hop_length - (L % self.hop_length)) % self.hop_length
+        num_frames = max(1, (max(L - self.n_fft, 0) + self.hop_length - 1)
+                         // self.hop_length + 1)
+        target_length = (num_frames - 1) * self.hop_length + self.n_fft
+        padding = target_length - L
         if padding > 0:
             wave = F.pad(wave, (0, padding))
         L_pad = wave.shape[-1]
@@ -56,6 +77,7 @@ class BandSCNet(nn.Module):
             hop_length=self.hop_length,
             win_length=self.win_length,
             #window=self.window,
+            window=self.window,
             center=False,
             normalized=True,
             return_complex=True,
@@ -69,7 +91,7 @@ class BandSCNet(nn.Module):
     def istft_decode(self, x, padding=0):
         B, S, C, Fr, T, Cp = x.shape
         
-        total_len = self.hop_length * (T - 1) + self.win_length
+        total_len = self.hop_length * (T - 1) + self.n_fft
         x = rearrange(x, 'b s c fr t cp -> (b s c) fr t cp')
         x_complex = torch.view_as_complex(x)    # (B*M, F, T)
         wave = torch.istft(
@@ -78,6 +100,7 @@ class BandSCNet(nn.Module):
             hop_length=self.hop_length,
             win_length=self.win_length,
             #window=self.window,
+            window=self.window,
             normalized=True,
             center=False,
             length=total_len,
