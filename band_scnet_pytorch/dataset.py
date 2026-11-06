@@ -1,10 +1,12 @@
 import os
 import torch
+import torch.nn.functional as F
 import librosa as lib
 import numpy as np
 
 from einops import rearrange
 from torch.utils.data import Dataset
+
 
 class MUSDBDataset(Dataset):
     def __init__(
@@ -44,6 +46,24 @@ class MUSDBDataset(Dataset):
 
         return out
 
+
+def musdb_collate_fn(batch):
+    max_length = max(max(d['mixture'].shape[-1], d['stems'].shape[-1]) for d in batch)
+    mixtures = []
+    stems = []
+
+    for d in batch:
+        mixture = d['mixture']
+        stem = d['stems']
+
+        mixtures.append(F.pad(mixture, (0, max_length - mixture.shape[-1])))
+        stems.append(F.pad(stem, (0, max_length - stem.shape[-1])))
+
+    out = {}
+    out['mixture'] = torch.stack(mixtures)
+    out['stems'] = torch.stack(stems)
+
+    return out
 '''
 # Create index dataframe(overlap 6 seconds)
 tmp = pd.DataFrame()

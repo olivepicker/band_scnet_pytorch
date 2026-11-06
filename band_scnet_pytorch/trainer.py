@@ -6,10 +6,9 @@ import numpy as np
 
 from torch.utils.data import DataLoader
 from einops import rearrange
-try:
-    from .loss import RMSELoss
-except ImportError:
-    from loss import RMSELoss
+
+from loss import RMSELoss
+from dataset import musdb_collate_fn
 
 def remix_in_batch(stems):
     B, S, C, T = stems.shape
@@ -52,6 +51,7 @@ class BandSCNetTrainer(nn.Module):
             num_workers=num_workers,
             pin_memory=True,
             drop_last=False,
+            collate_fn=musdb_collate_fn
         )
         self.valid_dl = DataLoader(
             valid_ds,
@@ -60,6 +60,7 @@ class BandSCNetTrainer(nn.Module):
             num_workers=num_workers,
             pin_memory=True,
             drop_last=False,
+            collate_fn=musdb_collate_fn
         )
 
         self.criterion = RMSELoss()
